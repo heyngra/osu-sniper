@@ -1,0 +1,21 @@
+{
+  "name": "osutwt",
+  "version": "1.0.0",
+  "description": "osu!sniper discord bot",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "heyn",
+  "license": "GPL-3.0-or-later",
+  "dependencies": {
+    "async": "^3.2.4",
+    "json5": "^2.2.2",
+    "node-fetch": "^2.6.7",
+    "node-html-to-image": "^3.2.4",
+    "node-irc": "^0.0.5",
+    "osu-api-extended": "^2.5.12",
+    "sqlite3": "^5.1.4",
+    "twitter-api-v2": "^1.12.10"
+  }
+}
