@@ -98,6 +98,10 @@ client.on('CHANMSG', function (data) {
         console.log('Saved!: ' + data.message);
     });
     getInfo(data.message).then(async function ({mode, sniper, beatmap, scores, difficulty_rating, bg, pp}) {
+        if (scores.length === 1) {
+            console.log("This score is a first score on a map, so it's not a snipe");
+            return;
+        }
         await v2.user.details(scores[1].user.id, modes_names[mode]).then(async (sniped1) => {
             let sniped = sniped1;
             if (scores[0].user.id !== sniper.id) {
