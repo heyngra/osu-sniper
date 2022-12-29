@@ -5,7 +5,11 @@ const {v2, auth, tools} = require('osu-api-extended');
 const nodeHtmlToImage = require('node-html-to-image');
 const {TwitterApi} = require('twitter-api-v2');
 const fetch = require("node-fetch");
+const express = require('express');
+require('express-async-errors');
+const cookieParser = require('cookie-parser');
 const async = require('async');
+const request_1 = require("osu-api-extended/dist/utility/request");
 const sqlite3 = require('sqlite3').verbose();
 const pass = JSON.parse(fs.readFileSync('pass.json').toString());
 const client = new ircClient('irc.ppy.sh', 6667, pass["ircNickname"], pass["ircFullname"], pass["ircPassword"]);
@@ -16,6 +20,11 @@ const twitterClient = new TwitterApi({
     accessSecret: pass['twitterAccessSecret']
 })
 const db = new sqlite3.Database('./webserver/db.sqlite3')
+
+const app = express();
+
+let base_osu_auth_token = null;
+
 twitterClient.currentUser().then((user) => {
     if (user === undefined) {
         console.log("Twitter login failed"); // i guess xd
@@ -23,8 +32,25 @@ twitterClient.currentUser().then((user) => {
     }
 })
 const login = async () => {
-    await auth.login(pass['CLIENT_ID'], pass['CLIENT_SECRET']);
+    let resp = await auth.login(pass['CLIENT_ID'], pass['CLIENT_SECRET']);
+    base_osu_auth_token = resp.access_token;
+    console.log("Current osu! session expires in " + resp.expires_in + " seconds");
+    setTimeout(login, resp.expires_in * 999); //999 instead of 1000 to be sure it relogs
 }
+
+/**
+ * @param table - table name
+ * @param column - column name
+ * @param value - value to set
+ * @param where - nullable, where statement, syntax: "WHERE ... = ..."
+ * @param limit - nullable, limit statement, syntax: "LIMIT ..."
+ */
+function updateDb(table, column, value, where, limit) {
+    db.serialize(() => {
+        db.run(`UPDATE ${table} SET ${column} = ${value} ${(where!==undefined) ? where : ""}${(limit!==undefined?limit:"")}`);
+    })
+}
+
 
 function createPlayer(osu) {
     db.serialize(() => {
@@ -169,9 +195,79 @@ process.on('SIGQUIT', () => {
     terminate();
 })
 
+app.set('view engine', 'ejs');
+
+app.engine('html', require('ejs').renderFile);
+
+app.set('views', __dirname + '/webserver');
+
+app.use(express.static(__dirname + '/webserver/staticfolder'));
+
+app.use(cookieParser(pass["cookieSecret"]));
+
+app.use(express.json())
+
+app.get("/login", function (req, res) {
+    let authCode = req.query.code;
+    if (authCode) {
+        request_1.request('https://osu.ppy.sh/oauth/token', {
+            method: 'POST',
+            headers: {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            data: JSON.stringify({
+                grant_type: 'authorization_code',
+                client_id: parseInt(pass["CLIENT_ID"]),
+                client_secret: pass["CLIENT_SECRET"],
+                redirect_uri: pass['redirect_uri'],
+                code: authCode,
+            })
+        }).then(({access_token, expires_in}) => {
+            res.cookie('osu_token', access_token, {maxAge: expires_in * 1000});
+            res.redirect('/');
+        });
+    } else {
+        res.redirect('/');
+    }
+
+});
+
+app.get('/', async function (req, res) {
+    if (!req.cookies["osu_token"]) {
+        res.render('index.html');
+    } else {
+        auth.cache_v2 = req.cookies["osu_token"];
+        let user = await v2.user.me.details("osu");
+        auth.cache_v2 = base_osu_auth_token;
+        let user_obj = await getPlayer(user);
+        res.render('logged.ejs', {user: user, obj: user_obj});
+    }
+});
+
+app.post('/changesnipe', async function (req, res) {
+    if (!req.cookies["osu_token"]) {
+        res.sendStatus(401);
+    } else {
+        auth.cache_v2 = req.cookies["osu_token"];
+        let user = await v2.user.me.details("osu");
+        auth.cache_v2 = base_osu_auth_token;
+        console.log(req.body);
+        updateDb("sniper_osuplayer", "snipable", req.body['snipe'], "WHERE id = " + user.id);
+        res.status(200).json({"status": "Success!"});
+    }
+})
+
+app.post('/logout', function (req, res) {
+    res.clearCookie('osu_token');
+    res.status(200).json({"status": "Logged out!"});
+})
+
 client.connect();
+app.listen(2137);
 
 //TODO:
 //remove [#NULL] if someone is unranked (didn't log in after a pp rework)
 //calculate pp using tools.calculate - done, need to check
 //get bg using tools.calculate - done, need to check
+//make snipes not spam (if someone oversnipes himself)
