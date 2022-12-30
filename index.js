@@ -169,6 +169,21 @@ async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_
             bgImage: bg,
             sniperImage: sniper.avatar_url,
             snipedImage: sniped.avatar_url,
+        },
+        puppeteerArgs: {
+            timeout: 0,
+            headless: 0,
+            executablePath: pass['chromePath'],
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--use-gl=swiftshader',
+                '--mute-audio',
+                '--disable-breakpad',
+                '--disable-canvas-aa',
+                '--disable-2d-canvas-clip-aa',
+                '--no-zygote',
+            ],
         }
     })
         .then(() => {
@@ -272,6 +287,5 @@ app.listen(2137);
 
 //TODO:
 //remove [#NULL] if someone is unranked (didn't log in after a pp rework)
-//calculate pp using tools.calculate - done, need to check
-//get bg using tools.calculate - done, need to check
 //make snipes not spam (if someone oversnipes himself)
+//track each snipe in a database
