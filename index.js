@@ -151,6 +151,23 @@ const getInfo = async (data) => {
 async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp}) {
     console.log(sniper.avatar_url, sniped.avatar_url)
     const read_template = fs.readFileSync('./image/index.html', 'utf8');
+    let pupeeteerArgs = null
+    if (pass['chromePath'] !== null) {
+        pupeeteerArgs = {
+            timeout: 0,
+            headless: 0,
+            executablePath: pass['chromePath'],
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--use-gl=swiftshader',
+                '--mute-audio',
+                '--disable-breakpad',
+                '--disable-canvas-aa',
+                '--disable-2d-canvas-clip-aa',
+                '--no-zygote',
+            ],}
+    }
     await nodeHtmlToImage({
         output: './rendered.png',
         html: read_template,
@@ -170,21 +187,7 @@ async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_
             sniperImage: sniper.avatar_url,
             snipedImage: sniped.avatar_url,
         },
-        puppeteerArgs: {
-            timeout: 0,
-            headless: 0,
-            executablePath: pass['chromePath'],
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--use-gl=swiftshader',
-                '--mute-audio',
-                '--disable-breakpad',
-                '--disable-canvas-aa',
-                '--disable-2d-canvas-clip-aa',
-                '--no-zygote',
-            ],
-        }
+        puppeteerArgs: pupeeteerArgs
     })
         .then(() => {
             sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp)
