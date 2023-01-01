@@ -10,6 +10,10 @@ require('express-async-errors');
 const cookieParser = require('cookie-parser');
 const async = require('async');
 const request_1 = require("osu-api-extended/dist/utility/request");
+const unzipper = require('unzipper');
+const admZip = require("adm-zip");
+const extract = require("extract-zip");
+const child_process = require("child_process");
 const sqlite3 = require('sqlite3').verbose();
 const pass = JSON.parse(fs.readFileSync('pass.json').toString());
 const client = new ircClient('irc.ppy.sh', 6667, pass["ircNickname"], pass["ircFullname"], pass["ircPassword"]);
@@ -23,7 +27,7 @@ const db = new sqlite3.Database('./webserver/db.sqlite3')
 
 const app = express();
 
-let base_osu_auth_token = null;
+let base_osu_auth_token, lazer_auth_token = null;
 
 twitterClient.currentUser().then((user) => {
     if (user === undefined) {
@@ -35,6 +39,10 @@ const login = async () => {
     let resp = await auth.login(pass['CLIENT_ID'], pass['CLIENT_SECRET']);
     base_osu_auth_token = resp.access_token;
     console.log("Current osu! session expires in " + resp.expires_in + " seconds");
+    let resp2 = await auth.login_lazer(pass['username'], Buffer.from(pass['password'], "base64").toString("ascii"));
+    console.log("osu!lazer session expires in " + resp2.expires_in + " seconds");
+    lazer_auth_token = resp2.access_token;
+    auth.set_v2(base_osu_auth_token);
     setTimeout(login, resp.expires_in * 999); //999 instead of 1000 to be sure it relogs
 }
 
@@ -57,6 +65,19 @@ function createPlayer(osu) {
         db.run("INSERT INTO sniper_osuplayer values ($id, true,false, null, $twitter_handle)", { // mentionable has to be false to comply with Twitter Rules, got suspeneded for it being true :(
             $id: osu.id,
             $twitter_handle: (osu.twitter !== '' || !osu.twitter.includes(" ")) ? osu.twitter : null,
+        })
+    })
+}
+
+function createScore(sniper, sniped, beatmap, scores) {
+    db.serialize(() => {
+        db.run("INSERT INTO sniper_snipes values ($sniper_id, $sniped_id, $beatmapset_id, $beatmap_id, $score_id, $hasreplay)", {
+            $sniper_id: sniper.id,
+            $sniped_id: sniped.id,
+            $beatmapset_id: beatmap.beatmapset_id,
+            $beatmap_id: beatmap.id,
+            $score_id: scores[0].id,
+            $hasreplay: scores[0].replay,
         })
     })
 }
@@ -190,16 +211,53 @@ async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_
         puppeteerArgs: pupeeteerArgs
     })
         .then(() => {
-            sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp)
+            createScore(sniper, sniped, beatmap, scores);
+            console.log(scores[0].replay)
+            if (scores[0].replay) {
+                downloadReplay({sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp})
+            }
+            else {
+                sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp)
+            }
         })
+}
+
+async function downloadReplay({sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, mode}) {
+    auth.set_v2(lazer_auth_token);
+
+    v2.user.me.download.quota().then((quota) => {
+        console.log(quota);
+    });
+
+    let beatmapset_name = `${beatmap.beatmapset.id} ${beatmap.beatmapset.artist} - ${beatmap.beatmapset.title}`;
+    beatmapset_name = beatmapset_name.replace(/[\/\\:\*\?"<>\|]/g, ''); //remove illegal characters
+    v2.beatmap.download(beatmap.beatmapset.id, __dirname+"\\rewind\\tempSongs\\"+beatmapset_name+".zip").then(async (path) => {
+        const zip = new admZip(path);
+        zip.extractAllTo(__dirname+"\\rewind\\Songs\\"+beatmapset_name, true)
+        if(fs.existsSync(path))fs.unlinkSync(path);
+        v2.scores.download(scores[0].id, "osu", __dirname+"\\rewind\\tempReplays\\"+scores[0].id.toString()+".osr").then((path) => {
+            fs.renameSync(path, __dirname+"\\rewind\\Replays\\"+scores[0].id.toString()+".osr");
+            auth.set_v2(base_osu_auth_token);
+            sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp).then(r => {});
+        })
+    })
 }
 
 async function sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp) {
     const mediaIds = await Promise.all([
         twitterClient.v1.uploadMedia('./rendered.png')
     ])
-    await twitterClient.v1.tweet(
-        `🔫 ${sniper.username} [#${sniper.statistics.global_rank}] has sniped ${sniped.username} [#${sniped.statistics.global_rank}] on ${beatmap.beatmapset.artist} - ${beatmap.beatmapset.title} [${beatmap.version}] ${difficulty_rating}⭐. This play is worth ${Math.round(pp.pp)}pp getting ${(scores[0].accuracy * 100).toFixed(2)}% accuracy. ${scores[0].mods.length !== 0 ? 'Mods:' + scores[0].mods.join(" ") + ". " : ""}Link to the map: https://osu.ppy.sh/b/${beatmap.id}`, {media_ids: mediaIds})
+    let tweetContentBase = `🔫 ${sniper.username} [#${sniper.statistics.global_rank}] has sniped ${sniped.username} [#${sniped.statistics.global_rank}] on ${beatmap.beatmapset.artist} - ${beatmap.beatmapset.title} [${beatmap.version}] ${difficulty_rating}⭐. This play is worth ${Math.round(pp.pp)}pp getting ${(scores[0].accuracy * 100).toFixed(2)}% accuracy. ${scores[0].mods.length !== 0 ? 'Mods:' + scores[0].mods.join(" ") + ". " : ""}Link to the map: https://osu.ppy.sh/b/${beatmap.id}`
+    let replayPart = `${(scores[0].replay)?" Replay: https://replay.heyn.live/?scoreId="+scores[0].id:""}`
+    if ((tweetContentBase.length+replayPart.length)>280) {
+        twitterClient.v1.tweet(tweetContentBase, {media_ids: mediaIds}).then((tweet) => {
+            console.log(tweet.id)
+            twitterClient.v1.reply("📹"+replayPart, tweet.id)
+        })
+    }
+    else {
+        await twitterClient.v1.tweet(tweetContentBase+replayPart, {media_ids: mediaIds})
+    }
 }
 
 function terminate() {
