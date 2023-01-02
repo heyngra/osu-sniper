@@ -207,6 +207,7 @@ async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_
             '--disable-canvas-aa',
             '--disable-2d-canvas-clip-aa',
             '--no-zygote',
+            '--disable-gpu',
         ],} : null;
     await nodeHtmlToImage({
         output: './rendered.png',
