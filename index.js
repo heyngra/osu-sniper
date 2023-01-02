@@ -55,7 +55,7 @@ const login = async () => {
  */
 function updateDb(table, column, value, where, limit) {
     db.serialize(() => {
-        db.run(`UPDATE ${table} SET ${column} = ${value} ${(where!==undefined) ? where : ""}${(limit!==undefined?limit:"")}`);
+        db.run(`UPDATE ${table} SET ${column} = ${value} ${(where!==undefined) ? where : ""} ${(limit!==undefined?limit:"")}`);
     })
 }
 
@@ -71,15 +71,36 @@ function createPlayer(osu) {
 
 function createScore(sniper, sniped, beatmap, scores) {
     db.serialize(() => {
-        db.run("INSERT INTO sniper_snipes values ($sniper_id, $sniped_id, $beatmapset_id, $beatmap_id, $score_id, $hasreplay)", {
+        db.run("INSERT INTO sniper_snipes values ($sniper_id, $sniped_id, $beatmapset_id, $beatmap_id, $score_id, $hasreplay, $sniped_score_id, null)", {
             $sniper_id: sniper.id,
             $sniped_id: sniped.id,
             $beatmapset_id: beatmap.beatmapset_id,
             $beatmap_id: beatmap.id,
             $score_id: scores[0].id,
             $hasreplay: scores[0].replay,
+            $sniped_score_id: scores[1].id
         })
     })
+}
+
+async function getScoreIfValid(scores, sniper, sniped) {
+    let resp = await async.parallel([
+        function (callback) {
+            db.serialize(() => {
+                db.all("SELECT * FROM sniper_snipes WHERE sniper = $sniper AND sniped_score_id = $sniped_score", {
+                    $sniper: sniper.id,
+                    $sniped_score: scores[1].id
+                }, (err, rows) => {
+                    if (rows.length === 0) {
+                        callback(null, {"resnipe": false});
+                    } else {
+                        callback({"resnipe": true, "snipe": rows.at(-1)});
+                    }
+                })
+            })
+        }
+    ]);
+    return resp[0];
 }
 
 async function getPlayer(osu) {
@@ -140,11 +161,12 @@ client.on('CHANMSG', function (data) {
                         callback(null, player);
                     })
                 }
-            ], function (err, results) {
+            ], async function (err, results) {
                 let sniperobj = results[0];
                 let snipedobj = results[1];
-                console.log(sniperobj, snipedobj);
-                generateImage({mode, sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp})
+                let resp = await getScoreIfValid(scores, sniperobj, snipedobj)
+                    console.log(sniperobj, snipedobj);
+                    generateImage({mode, sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp})
             });
         });
     })
@@ -169,26 +191,23 @@ const getInfo = async (data) => {
     return {mode, sniper, beatmap, scores, difficulty_rating, bg, pp};
 }
 
-async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp}) {
+async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp}) {
     console.log(sniper.avatar_url, sniped.avatar_url)
     const read_template = fs.readFileSync('./image/index.html', 'utf8');
-    let pupeeteerArgs = null
-    if (pass['chromePath'] !== null) {
-        pupeeteerArgs = {
-            timeout: 0,
-            headless: 0,
-            executablePath: pass['chromePath'],
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--use-gl=swiftshader',
-                '--mute-audio',
-                '--disable-breakpad',
-                '--disable-canvas-aa',
-                '--disable-2d-canvas-clip-aa',
-                '--no-zygote',
-            ],}
-    }
+    let pupeeteerArgs = (pass['chromePath'] !== null) ? {
+        timeout: 0,
+        headless: 0,
+        executablePath: pass['chromePath'],
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--use-gl=swiftshader',
+            '--mute-audio',
+            '--disable-breakpad',
+            '--disable-canvas-aa',
+            '--disable-2d-canvas-clip-aa',
+            '--no-zygote',
+        ],} : null;
     await nodeHtmlToImage({
         output: './rendered.png',
         html: read_template,
@@ -214,49 +233,94 @@ async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_
             createScore(sniper, sniped, beatmap, scores);
             console.log(scores[0].replay)
             if (scores[0].replay) {
-                downloadReplay({sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp})
+                downloadReplay({sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp})
             }
             else {
-                sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp)
+                sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp)
             }
         })
 }
 
-async function downloadReplay({sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, mode}) {
+async function downloadReplay({sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp}) {
     auth.set_v2(lazer_auth_token);
 
     v2.user.me.download.quota().then((quota) => {
         console.log(quota);
     });
 
-    let beatmapset_name = `${beatmap.beatmapset.id} ${beatmap.beatmapset.artist} - ${beatmap.beatmapset.title}`;
-    beatmapset_name = beatmapset_name.replace(/[\/\\:\*\?"<>\|]/g, ''); //remove illegal characters
-    v2.beatmap.download(beatmap.beatmapset.id, __dirname+"\\rewind\\tempSongs\\"+beatmapset_name+".zip").then(async (path) => {
-        const zip = new admZip(path);
-        zip.extractAllTo(__dirname+"\\rewind\\Songs\\"+beatmapset_name, true)
-        if(fs.existsSync(path))fs.unlinkSync(path);
-        v2.scores.download(scores[0].id, "osu", __dirname+"\\rewind\\tempReplays\\"+scores[0].id.toString()+".osr").then((path) => {
-            fs.renameSync(path, __dirname+"\\rewind\\Replays\\"+scores[0].id.toString()+".osr");
-            auth.set_v2(base_osu_auth_token);
-            sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp).then(r => {});
+
+    async function downloadBeatmap(beatmap) {
+        let beatmapset_name = `${beatmap.beatmapset.id} ${beatmap.beatmapset.artist} - ${beatmap.beatmapset.title}`;
+        beatmapset_name = beatmapset_name.replace(/[\/\\:\*\?"<>\|]/g, ''); //remove illegal characters
+        if (fs.existsSync(__dirname+"/rewind/Songs/"+beatmapset_name)) {
+            console.log("Beatmap already exists, skipping download");
+            return;
+        } else if (fs.existsSync(__dirname))
+        console.log("Downloading beatmap");
+        await v2.beatmap.download(beatmap.beatmapset.id, __dirname+"/rewind/tempSongs/"+beatmapset_name+".zip").then((path) => {
+            console.log("Downloaded beatmap zip to "+path);
+            const zip = new admZip(path);
+            zip.extractAllTo(__dirname+"/rewind/Songs/"+beatmapset_name)
+            console.log("Beatmap unzipped!")
+            if(fs.existsSync(path))fs.unlinkSync(path);
+            console.log("Beatmap zip removed!");
+        });
+    }
+    async function downloadScore(score) {
+        v2.scores.download(score.id, "osu", __dirname+"/rewind/tempReplays/"+scores[0].id.toString()+".osr").then((path) => {
+            fs.renameSync(path, __dirname+"/rewind/Replays/"+score.id.toString()+".osr");
         })
-    })
+    }
+    await async.series([
+        function(callback) {
+            downloadBeatmap(beatmap);
+            callback(null);
+        },
+        function(callback) {
+            downloadScore(scores[0]);
+            callback(null);
+        }
+    ], function(err) {
+        if (err) {console.log(err)}
+        auth.set_v2(base_osu_auth_token);
+        sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp)
+    });
+
 }
 
-async function sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp) {
+async function sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp) {
     const mediaIds = await Promise.all([
         twitterClient.v1.uploadMedia('./rendered.png')
     ])
     let tweetContentBase = `🔫 ${sniper.username} [#${sniper.statistics.global_rank}] has sniped ${sniped.username} [#${sniped.statistics.global_rank}] on ${beatmap.beatmapset.artist} - ${beatmap.beatmapset.title} [${beatmap.version}] ${difficulty_rating}⭐. This play is worth ${Math.round(pp.pp)}pp getting ${(scores[0].accuracy * 100).toFixed(2)}% accuracy. ${scores[0].mods.length !== 0 ? 'Mods:' + scores[0].mods.join(" ") + ". " : ""}Link to the map: https://osu.ppy.sh/b/${beatmap.id}`
     let replayPart = `${(scores[0].replay)?" Replay: https://replay.heyn.live/?scoreId="+scores[0].id:""}`
     if ((tweetContentBase.length+replayPart.length)>280) {
-        twitterClient.v1.tweet(tweetContentBase, {media_ids: mediaIds}).then((tweet) => {
-            console.log(tweet.id)
-            twitterClient.v1.reply("📹"+replayPart, tweet.id)
-        })
+        if (resp.resnipe) {
+            twitterClient.v1.reply(tweetContentBase, resp.snipe.tweet_id, {media_ids: mediaIds}).then((tweet) => {
+                console.log(tweet.id)
+                twitterClient.v1.reply("📹"+replayPart, tweet.id)
+                updateDb("sniper_snipes", "tweet_id", tweet.id, "WHERE score_id="+scores[0].id)
+            })
+        }
+        else {
+            twitterClient.v1.tweet(tweetContentBase, {media_ids: mediaIds}).then((tweet) => {
+                console.log(tweet.id)
+                twitterClient.v1.reply("📹" + replayPart, tweet.id)
+                updateDb("sniper_snipes", "tweet_id", tweet.id, "WHERE score_id=" + scores[0].id)
+            })
+        }
     }
     else {
-        await twitterClient.v1.tweet(tweetContentBase+replayPart, {media_ids: mediaIds})
+        if (resp.resnipe) {
+            twitterClient.v1.reply(tweetContentBase+replayPart, resp.snipe.tweet_id, {media_ids: mediaIds}).then((tweet) => {
+                updateDb("sniper_snipes", "tweet_id", tweet.id, "WHERE score_id="+scores[0].id)
+            })
+        }
+        else {
+            twitterClient.v1.tweet(tweetContentBase+replayPart, {media_ids: mediaIds}).then((tweet) => {
+                updateDb("sniper_snipes", "tweet_id", tweet.id, "WHERE score_id="+scores[0].id)
+            })
+        }
     }
 }
 
@@ -344,9 +408,8 @@ app.post('/logout', function (req, res) {
 })
 
 client.connect();
-app.listen(2137);
+app.listen(6120);
 
 //TODO:
 //remove [#NULL] if someone is unranked (didn't log in after a pp rework)
 //make snipes not spam (if someone oversnipes himself)
-//track each snipe in a database
