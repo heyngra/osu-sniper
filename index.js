@@ -91,10 +91,13 @@ async function getScoreIfValid(scores, sniper, sniped) {
                     $sniper: sniper.id,
                     $sniped_score: scores[1].id
                 }, (err, rows) => {
+                    if (err) {
+                        console.log(err)
+                    }
                     if (rows.length === 0) {
                         callback(null, {"resnipe": false});
                     } else {
-                        callback({"resnipe": true, "snipe": rows.at(-1)});
+                        callback(null, {"resnipe": true, "snipe": rows[rows.length-1]});
                     }
                 })
             })
@@ -161,12 +164,14 @@ client.on('CHANMSG', function (data) {
                         callback(null, player);
                     })
                 }
-            ], async function (err, results) {
+            ], function (err, results) {
                 let sniperobj = results[0];
                 let snipedobj = results[1];
-                let resp = await getScoreIfValid(scores, sniperobj, snipedobj)
+                console.log("test");
+                getScoreIfValid(scores, sniperobj, snipedobj).then((resp) => {
                     console.log(sniperobj, snipedobj);
                     generateImage({mode, sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp})
+                })
             });
         });
     })
@@ -195,7 +200,6 @@ async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_
     console.log(sniper.avatar_url, sniped.avatar_url)
     const read_template = fs.readFileSync('./image/index.html', 'utf8');
     let pupeeteerArgs = (pass['chromePath'] !== null) ? {
-        timeout: 0,
         headless: 0,
         executablePath: pass['chromePath'],
         args: [
@@ -240,6 +244,9 @@ async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_
                 sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp)
             }
         })
+        .catch(error => {
+            console.error('Oops, something went wrong!', error);
+        });
 }
 
 async function downloadReplay({sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp}) {
@@ -296,32 +303,20 @@ async function sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sni
     let tweetContentBase = `🔫 ${sniper.username} [#${sniper.statistics.global_rank}] has sniped ${sniped.username} [#${sniped.statistics.global_rank}] on ${beatmap.beatmapset.artist} - ${beatmap.beatmapset.title} [${beatmap.version}] ${difficulty_rating}⭐. This play is worth ${Math.round(pp.pp)}pp getting ${(scores[0].accuracy * 100).toFixed(2)}% accuracy. ${scores[0].mods.length !== 0 ? 'Mods:' + scores[0].mods.join(" ") + ". " : ""}Link to the map: https://osu.ppy.sh/b/${beatmap.id}`
     let replayPart = `${(scores[0].replay)?" Replay: https://replay.heyn.live/?scoreId="+scores[0].id:""}`
     if ((tweetContentBase.length+replayPart.length)>280) {
-        if (resp.resnipe) {
-            twitterClient.v1.reply(tweetContentBase, resp.snipe.tweet_id, {media_ids: mediaIds}).then((tweet) => {
-                console.log(tweet.id)
-                twitterClient.v1.reply("📹"+replayPart, tweet.id)
-                updateDb("sniper_snipes", "tweet_id", tweet.id, "WHERE score_id="+scores[0].id)
-            })
-        }
-        else {
-            twitterClient.v1.tweet(tweetContentBase, {media_ids: mediaIds}).then((tweet) => {
-                console.log(tweet.id)
-                twitterClient.v1.reply("📹" + replayPart, tweet.id)
-                updateDb("sniper_snipes", "tweet_id", tweet.id, "WHERE score_id=" + scores[0].id)
-            })
-        }
+        const tweets = await twitterClient.v1.tweetThread(
+            [{
+                status: tweetContentBase, media_ids: mediaIds
+            }, {
+                status: "📹"+replayPart
+            }]
+        )
+        updateDb("sniper_snipes", "tweet_id", tweets[0].id, "WHERE score_id=" + scores[0].id)
     }
     else {
-        if (resp.resnipe) {
-            twitterClient.v1.reply(tweetContentBase+replayPart, resp.snipe.tweet_id, {media_ids: mediaIds}).then((tweet) => {
-                updateDb("sniper_snipes", "tweet_id", tweet.id, "WHERE score_id="+scores[0].id)
-            })
-        }
-        else {
-            twitterClient.v1.tweet(tweetContentBase+replayPart, {media_ids: mediaIds}).then((tweet) => {
-                updateDb("sniper_snipes", "tweet_id", tweet.id, "WHERE score_id="+scores[0].id)
-            })
-        }
+        const tweet = await twitterClient.v1.tweet(
+            tweetContentBase+replayPart, {media_ids: mediaIds}
+        )
+        updateDb("sniper_snipes", "tweet_id", tweet.id, "WHERE score_id=" + scores[0].id)
     }
 }
 
