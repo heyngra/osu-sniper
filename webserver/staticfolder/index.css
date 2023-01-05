@@ -1,0 +1,93 @@
+body {
+    overflow-y: hidden; /* Hide vertical scrollbar */
+    overflow-x: hidden; /* Hide horizontal scrollbar */
+}
+
+.background-image {
+    background: url("https://raw.githubusercontent.com/ppy/osu-resources/master/osu.Game.Resources/Textures/Backgrounds/bg1.jpg") no-repeat center center;
+    background-size: cover;
+    height: 100%;
+    width: 100%;
+    transform: scale(1.1);
+    position: relative;
+    overflow: hidden;
+}
+
+.background-image::after {
+    content: "";
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    backdrop-filter: blur(10px); /* apply the blur */
+    pointer-events: none; /* make the overlay click-through */
+}
+
+.main {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    height: 75%;
+    width: 50%;
+    left: 50%;
+    top: 50%;
+    -webkit-transform: translate(-50%, -50%);
+    transform: translate(-50%, -50%);
+    background: #202322;
+    filter: blur(0px);
+}
+
+.main-text {
+    color: white;
+    font-family: 'LEMON MILK', cursive;
+    font-size: 7vh;
+    text-align: center;
+    margin-inline: auto;
+    margin-bottom: 0;
+}
+
+.rest {
+    flex-grow: 1;
+    margin: auto;
+    flex-direction: row;
+    display: flex;
+
+}
+
+.login-button {
+    background-color: #313636;
+    font-family: 'LEMON MILK', cursive;
+    color: white;
+    font-size: 10vh;
+    margin: auto;
+    cursor: pointer;
+}
+
+.login-button:hover {
+    animation: ease-in-out 0.2s;
+    animation-name: hover_login;
+    background-color: #4d4d4d;
+}
+
+.login-button:not(:hover) {
+    animation: ease-in-out 0.2s;
+    animation-name: not_hover_login;
+    background-color: #313636;
+}
+
+@keyframes hover_login {
+    from {
+        background-color: #313636;
+    }
+    to {
+        background-color: #4d4d4d;
+    }
+}
+
+@keyframes not_hover_login {
+    from {
+        background-color: #4d4d4d;
+    }
+    to {
+        background-color: #313636;
+    }
+}

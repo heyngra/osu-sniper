@@ -1,4 +1,5 @@
 pass.json
+cloudflared.exe
 image/images/*.png
 .idea/
 rendered.png
