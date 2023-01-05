@@ -8,8 +8,8 @@ const twitterClient = new TwitterApi({
     appKey: pass['twitterAppKey'],
     appSecret: pass['twitterSecret']
 });
-const oauth_token = "WJGPbwAAAAABNkPfAAABhVnTpsE";
-const oauth_verifier = "emA52rtJ8C6RXIBzDWTE4fUmMD7JJJqh";
+const oauth_token = "";
+const oauth_verifier = "";
 
 async function main() {
     if (oauth_token === "") {
