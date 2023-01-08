@@ -1,10 +1,9 @@
-const ircClient = require('node-irc');
+const irc = require('irc-upd');
 const modes_names = {0: "osu", 1: "taiko", 2: "fruits", 3: "mania"};
 const fs = require('fs');
 const {v2, auth, tools} = require('osu-api-extended');
 const nodeHtmlToImage = require('node-html-to-image');
 const {TwitterApi} = require('twitter-api-v2');
-const fetch = require("node-fetch");
 const express = require('express');
 require('express-async-errors');
 const cookieParser = require('cookie-parser');
@@ -13,7 +12,15 @@ const request_1 = require("osu-api-extended/dist/utility/request");
 const admZip = require("adm-zip");
 const sqlite3 = require('sqlite3').verbose();
 const pass = JSON.parse(fs.readFileSync('pass.json').toString());
-const client = new ircClient('irc.ppy.sh', 6667, pass["ircNickname"], pass["ircFullname"], pass["ircPassword"]);
+const client = new irc.Client('irc.ppy.sh', pass["ircNickname"], {
+    port: 6667,
+    username: pass["ircFullname"],
+    password: pass["ircPassword"],
+    autoRejoin: true,
+    autoConnect: true,
+    channels: ['#announce']
+
+});
 const twitterClient = new TwitterApi({
     appKey: pass['twitterAppKey'],
     appSecret: pass['twitterSecret'],
@@ -122,24 +129,23 @@ async function getPlayer(osu) {
     return resp[0];
 }
 
-client.on('ready', function () {
+client.addListener('registered', function (message) {
     console.log("Connecting to osu! API...");
     login().then(() => {
         console.log('Connected to osu! API!');
     });
     console.log("Connecting to IRC!");
-    client.join("#announce");
 });
-client.on('CHANMSG', function (data) {
-    if (!data.message.includes("achieved rank #1")) {
+client.addListener('message#announce', function (from, message) {
+    console.log(message);
+    if (!message.includes("achieved rank #1")) {
         return;
     }
-    console.log(data.message)
-    fs.appendFile('1s.txt', "Time " + Date.now() + " " + data.message + "\n", function (err) {
+    fs.appendFile('1s.txt', "Time " + Date.now() + " " + message + "\n", function (err) {
         if (err) return console.log(err);
-        console.log('Saved!: ' + data.message);
+        console.log('Saved!: ' + message);
     });
-    getInfo(data.message).then(async function ({mode, sniper, beatmap, scores, difficulty_rating, bg, pp}) {
+    getInfo(message).then(async function ({mode, sniper, beatmap, scores, difficulty_rating, bg, pp}) {
         if (scores.length === 1) {
             console.log("This score is a first score on a map, so it's not a snipe");
             return;
@@ -148,6 +154,7 @@ client.on('CHANMSG', function (data) {
             let sniped = sniped1;
             if (scores[0].user.id !== sniper.id) {
                 console.log("This score is not a snipe!")
+                return;
             }
 
             await async.parallel([
@@ -399,8 +406,6 @@ app.post('/logout', function (req, res) {
     res.clearCookie('osu_token');
     res.status(200).json({"status": "Logged out!"});
 })
-
-client.connect();
 app.listen(6120);
 
 //TODO:
