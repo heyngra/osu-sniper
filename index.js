@@ -18,7 +18,6 @@ const client = new irc.Client('irc.ppy.sh', pass["ircNickname"], {
     password: pass["ircPassword"],
     autoRejoin: true,
     autoConnect: true,
-    channels: ['#announce']
 
 });
 const twitterClient = new TwitterApi({
@@ -135,6 +134,7 @@ client.addListener('registered', function (message) {
         console.log('Connected to osu! API!');
     });
     console.log("Connecting to IRC!");
+    client.join("#announce");
 });
 client.addListener('message#announce', function (from, message) {
     console.log(message);
@@ -203,6 +203,7 @@ const getInfo = async (data) => {
 async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp}) {
     console.log(sniper.avatar_url, sniped.avatar_url)
     const read_template = fs.readFileSync('./image/index.html', 'utf8');
+    let finished = false;
     let pupeeteerArgs = (pass['chromePath'] !== null) ? {
         headless: 0,
         executablePath: pass['chromePath'],
@@ -217,40 +218,57 @@ async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_
             '--no-zygote',
             '--disable-gpu',
         ],} : null;
-    await nodeHtmlToImage({
-        output: './rendered.png',
-        html: read_template,
-        content: {
-            sniperusr: sniper.username,
-            sniperrank: sniper.statistics.global_rank,
-            snipedusr: sniped.username,
-            snipedrank: sniped.statistics.global_rank,
-            artist: beatmap.beatmapset.artist,
-            title: beatmap.beatmapset.title,
-            version: beatmap.version,
-            pp: Math.round(pp.pp),
-            acc: (scores[0].accuracy * 100).toFixed(2),
-            star: difficulty_rating,
-            mods: (scores[0].mods.length > 0) ? scores[0].mods.join(",") : "none",
-            bgImage: bg,
-            sniperImage: sniper.avatar_url,
-            snipedImage: sniped.avatar_url,
-        },
-        puppeteerArgs: pupeeteerArgs
-    })
-        .then(() => {
-            createScore(sniper, sniped, beatmap, scores);
-            console.log(scores[0].replay)
-            if (scores[0].replay) {
-                downloadReplay({sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp})
-            }
-            else {
-                sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp)
-            }
-        })
-        .catch(error => {
-            console.error('Oops, something went wrong!', error);
-        });
+    while (!finished) {
+        try {
+            await nodeHtmlToImage({
+                output: './rendered.png',
+                html: read_template,
+                content: {
+                    sniperusr: sniper.username,
+                    sniperrank: sniper.statistics.global_rank,
+                    snipedusr: sniped.username,
+                    snipedrank: sniped.statistics.global_rank,
+                    artist: beatmap.beatmapset.artist,
+                    title: beatmap.beatmapset.title,
+                    version: beatmap.version,
+                    pp: Math.round(pp.pp),
+                    acc: (scores[0].accuracy * 100).toFixed(2),
+                    star: difficulty_rating,
+                    mods: (scores[0].mods.length > 0) ? scores[0].mods.join(",") : "none",
+                    bgImage: bg,
+                    sniperImage: sniper.avatar_url,
+                    snipedImage: sniped.avatar_url,
+                },
+                puppeteerArgs: pupeeteerArgs
+            })
+                .then(() => {
+                    finished = true;
+                    createScore(sniper, sniped, beatmap, scores);
+                    console.log(scores[0].replay)
+                    if (scores[0].replay) {
+                        downloadReplay({
+                            sniper,
+                            beatmap,
+                            sniped,
+                            scores,
+                            difficulty_rating,
+                            sniperobj,
+                            snipedobj,
+                            bg,
+                            pp,
+                            resp
+                        })
+                    } else {
+                        sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp)
+                    }
+                })
+                .catch(error => {
+                    console.error('Oops, something went wrong!', error);
+                });
+        } catch (e) {
+            console.log(e)
+        }
+    }
 }
 
 async function downloadReplay({sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp}) {
