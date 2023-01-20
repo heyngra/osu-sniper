@@ -1,10 +1,9 @@
-const ircClient = require('node-irc');
+const irc = require('irc-upd');
 const modes_names = {0: "osu", 1: "taiko", 2: "fruits", 3: "mania"};
 const fs = require('fs');
 const {v2, auth, tools} = require('osu-api-extended');
 const nodeHtmlToImage = require('node-html-to-image');
 const {TwitterApi} = require('twitter-api-v2');
-const fetch = require("node-fetch");
 const express = require('express');
 require('express-async-errors');
 const cookieParser = require('cookie-parser');
@@ -13,7 +12,14 @@ const request_1 = require("osu-api-extended/dist/utility/request");
 const admZip = require("adm-zip");
 const sqlite3 = require('sqlite3').verbose();
 const pass = JSON.parse(fs.readFileSync('pass.json').toString());
-const client = new ircClient('irc.ppy.sh', 6667, pass["ircNickname"], pass["ircFullname"], pass["ircPassword"]);
+const client = new irc.Client('irc.ppy.sh', pass["ircNickname"], {
+    port: 6667,
+    username: pass["ircFullname"],
+    password: pass["ircPassword"],
+    autoRejoin: true,
+    autoConnect: true,
+
+});
 const twitterClient = new TwitterApi({
     appKey: pass['twitterAppKey'],
     appSecret: pass['twitterSecret'],
@@ -122,7 +128,7 @@ async function getPlayer(osu) {
     return resp[0];
 }
 
-client.on('ready', function () {
+client.addListener('registered', function (message) {
     console.log("Connecting to osu! API...");
     login().then(() => {
         console.log('Connected to osu! API!');
@@ -130,16 +136,16 @@ client.on('ready', function () {
     console.log("Connecting to IRC!");
     client.join("#announce");
 });
-client.on('CHANMSG', function (data) {
-    if (!data.message.includes("achieved rank #1")) {
+client.addListener('message#announce', function (from, message) {
+    console.log(message);
+    if (!message.includes("achieved rank #1")) {
         return;
     }
-    console.log(data.message)
-    fs.appendFile('1s.txt', "Time " + Date.now() + " " + data.message + "\n", function (err) {
+    fs.appendFile('1s.txt', "Time " + Date.now() + " " + message + "\n", function (err) {
         if (err) return console.log(err);
-        console.log('Saved!: ' + data.message);
+        console.log('Saved!: ' + message);
     });
-    getInfo(data.message).then(async function ({mode, sniper, beatmap, scores, difficulty_rating, bg, pp}) {
+    getInfo(message).then(async function ({mode, sniper, beatmap, scores, difficulty_rating, bg, pp}) {
         if (scores.length === 1) {
             console.log("This score is a first score on a map, so it's not a snipe");
             return;
@@ -148,6 +154,7 @@ client.on('CHANMSG', function (data) {
             let sniped = sniped1;
             if (scores[0].user.id !== sniper.id) {
                 console.log("This score is not a snipe!")
+                return;
             }
 
             await async.parallel([
@@ -196,6 +203,7 @@ const getInfo = async (data) => {
 async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp}) {
     console.log(sniper.avatar_url, sniped.avatar_url)
     const read_template = fs.readFileSync('./image/index.html', 'utf8');
+    let finished = false;
     let pupeeteerArgs = (pass['chromePath'] !== null) ? {
         headless: 0,
         executablePath: pass['chromePath'],
@@ -210,40 +218,56 @@ async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_
             '--no-zygote',
             '--disable-gpu',
         ],} : null;
-    await nodeHtmlToImage({
-        output: './rendered.png',
-        html: read_template,
-        content: {
-            sniperusr: sniper.username,
-            sniperrank: sniper.statistics.global_rank,
-            snipedusr: sniped.username,
-            snipedrank: sniped.statistics.global_rank,
-            artist: beatmap.beatmapset.artist,
-            title: beatmap.beatmapset.title,
-            version: beatmap.version,
-            pp: Math.round(pp.pp),
-            acc: (scores[0].accuracy * 100).toFixed(2),
-            star: difficulty_rating,
-            mods: (scores[0].mods.length > 0) ? scores[0].mods.join(",") : "none",
-            bgImage: bg,
-            sniperImage: sniper.avatar_url,
-            snipedImage: sniped.avatar_url,
-        },
-        puppeteerArgs: pupeeteerArgs
-    })
-        .then(() => {
-            createScore(sniper, sniped, beatmap, scores);
-            console.log(scores[0].replay)
-            if (scores[0].replay) {
-                downloadReplay({sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp})
-            }
-            else {
-                sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp)
-            }
+    try {
+        await nodeHtmlToImage({
+            output: './rendered.png',
+            html: read_template,
+            content: {
+                sniperusr: sniper.username,
+                sniperrank: sniper.statistics.global_rank,
+                snipedusr: sniped.username,
+                snipedrank: sniped.statistics.global_rank,
+                artist: beatmap.beatmapset.artist,
+                title: beatmap.beatmapset.title,
+                version: beatmap.version,
+                pp: Math.round(pp.pp),
+                acc: (scores[0].accuracy * 100).toFixed(2),
+                star: difficulty_rating,
+                mods: (scores[0].mods.length > 0) ? scores[0].mods.join(",") : "none",
+                bgImage: bg,
+                sniperImage: sniper.avatar_url,
+                snipedImage: sniped.avatar_url,
+            },
+            puppeteerArgs: pupeeteerArgs
         })
-        .catch(error => {
-            console.error('Oops, something went wrong!', error);
-        });
+            .then(() => {
+                finished = true;
+                createScore(sniper, sniped, beatmap, scores);
+                console.log(scores[0].replay)
+                if (scores[0].replay) {
+                    downloadReplay({
+                        sniper,
+                        beatmap,
+                        sniped,
+                        scores,
+                        difficulty_rating,
+                        sniperobj,
+                        snipedobj,
+                        bg,
+                        pp,
+                        resp
+                    })
+                } else {
+                    sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp)
+                }
+            })
+            .catch(error => {
+                console.error('Oops, something went wrong!', error);
+            });
+    } catch (e) {
+        console.log(e)
+        generateImage({mode, sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp})
+    }
 }
 
 async function downloadReplay({sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp}) {
@@ -299,7 +323,7 @@ async function sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sni
     ])
     let tweetContentBase = `🔫 ${sniper.username} [#${sniper.statistics.global_rank}] has sniped ${sniped.username} [#${sniped.statistics.global_rank}] on ${beatmap.beatmapset.artist} - ${beatmap.beatmapset.title} [${beatmap.version}] ${difficulty_rating}⭐. This play is worth ${Math.round(pp.pp)}pp getting ${(scores[0].accuracy * 100).toFixed(2)}% accuracy. ${scores[0].mods.length !== 0 ? 'Mods:' + scores[0].mods.join(" ") + ". " : ""}Link to the map: https://osu.ppy.sh/b/${beatmap.id}`
     let replayPart = `${(scores[0].replay)?" Replay: https://replay.heyn.live/?scoreId="+scores[0].id:""}`
-    if ((tweetContentBase.length+replayPart.length)>280) {
+    if ((tweetContentBase.length+replayPart.length)>=280) {
         const tweets = await twitterClient.v1.tweetThread(
             [{
                 status: tweetContentBase, media_ids: mediaIds
@@ -399,8 +423,6 @@ app.post('/logout', function (req, res) {
     res.clearCookie('osu_token');
     res.status(200).json({"status": "Logged out!"});
 })
-
-client.connect();
 app.listen(6120);
 
 //TODO:
