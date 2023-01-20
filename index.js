@@ -218,56 +218,55 @@ async function generateImage({mode, sniper, beatmap, sniped, scores, difficulty_
             '--no-zygote',
             '--disable-gpu',
         ],} : null;
-    while (!finished) {
-        try {
-            await nodeHtmlToImage({
-                output: './rendered.png',
-                html: read_template,
-                content: {
-                    sniperusr: sniper.username,
-                    sniperrank: sniper.statistics.global_rank,
-                    snipedusr: sniped.username,
-                    snipedrank: sniped.statistics.global_rank,
-                    artist: beatmap.beatmapset.artist,
-                    title: beatmap.beatmapset.title,
-                    version: beatmap.version,
-                    pp: Math.round(pp.pp),
-                    acc: (scores[0].accuracy * 100).toFixed(2),
-                    star: difficulty_rating,
-                    mods: (scores[0].mods.length > 0) ? scores[0].mods.join(",") : "none",
-                    bgImage: bg,
-                    sniperImage: sniper.avatar_url,
-                    snipedImage: sniped.avatar_url,
-                },
-                puppeteerArgs: pupeeteerArgs
+    try {
+        await nodeHtmlToImage({
+            output: './rendered.png',
+            html: read_template,
+            content: {
+                sniperusr: sniper.username,
+                sniperrank: sniper.statistics.global_rank,
+                snipedusr: sniped.username,
+                snipedrank: sniped.statistics.global_rank,
+                artist: beatmap.beatmapset.artist,
+                title: beatmap.beatmapset.title,
+                version: beatmap.version,
+                pp: Math.round(pp.pp),
+                acc: (scores[0].accuracy * 100).toFixed(2),
+                star: difficulty_rating,
+                mods: (scores[0].mods.length > 0) ? scores[0].mods.join(",") : "none",
+                bgImage: bg,
+                sniperImage: sniper.avatar_url,
+                snipedImage: sniped.avatar_url,
+            },
+            puppeteerArgs: pupeeteerArgs
+        })
+            .then(() => {
+                finished = true;
+                createScore(sniper, sniped, beatmap, scores);
+                console.log(scores[0].replay)
+                if (scores[0].replay) {
+                    downloadReplay({
+                        sniper,
+                        beatmap,
+                        sniped,
+                        scores,
+                        difficulty_rating,
+                        sniperobj,
+                        snipedobj,
+                        bg,
+                        pp,
+                        resp
+                    })
+                } else {
+                    sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp)
+                }
             })
-                .then(() => {
-                    finished = true;
-                    createScore(sniper, sniped, beatmap, scores);
-                    console.log(scores[0].replay)
-                    if (scores[0].replay) {
-                        downloadReplay({
-                            sniper,
-                            beatmap,
-                            sniped,
-                            scores,
-                            difficulty_rating,
-                            sniperobj,
-                            snipedobj,
-                            bg,
-                            pp,
-                            resp
-                        })
-                    } else {
-                        sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp)
-                    }
-                })
-                .catch(error => {
-                    console.error('Oops, something went wrong!', error);
-                });
-        } catch (e) {
-            console.log(e)
-        }
+            .catch(error => {
+                console.error('Oops, something went wrong!', error);
+            });
+    } catch (e) {
+        console.log(e)
+        generateImage({mode, sniper, beatmap, sniped, scores, difficulty_rating, sniperobj, snipedobj, bg, pp, resp})
     }
 }
 
@@ -324,7 +323,7 @@ async function sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sni
     ])
     let tweetContentBase = `🔫 ${sniper.username} [#${sniper.statistics.global_rank}] has sniped ${sniped.username} [#${sniped.statistics.global_rank}] on ${beatmap.beatmapset.artist} - ${beatmap.beatmapset.title} [${beatmap.version}] ${difficulty_rating}⭐. This play is worth ${Math.round(pp.pp)}pp getting ${(scores[0].accuracy * 100).toFixed(2)}% accuracy. ${scores[0].mods.length !== 0 ? 'Mods:' + scores[0].mods.join(" ") + ". " : ""}Link to the map: https://osu.ppy.sh/b/${beatmap.id}`
     let replayPart = `${(scores[0].replay)?" Replay: https://replay.heyn.live/?scoreId="+scores[0].id:""}`
-    if ((tweetContentBase.length+replayPart.length)>280) {
+    if ((tweetContentBase.length+replayPart.length)>=280) {
         const tweets = await twitterClient.v1.tweetThread(
             [{
                 status: tweetContentBase, media_ids: mediaIds
