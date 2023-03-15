@@ -21,7 +21,7 @@
     "node-html-to-image": "^3.2.4",
     "node-irc": "^0.0.5",
     "osu-api-extended": "^2.5.12",
-    "sqlite3": "^5.1.4",
+    "sqlite3": "^5.1.5",
     "twitter-api-v2": "^1.12.10"
   }
 }
