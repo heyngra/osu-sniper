@@ -321,23 +321,27 @@ async function sendTweet(sniper, beatmap, sniped, scores, difficulty_rating, sni
     const mediaIds = await Promise.all([
         twitterClient.v1.uploadMedia('./rendered.png')
     ])
-    let tweetContentBase = `🔫 ${sniper.username} [#${sniper.statistics.global_rank}] has sniped ${sniped.username} [#${sniped.statistics.global_rank}] on ${beatmap.beatmapset.artist} - ${beatmap.beatmapset.title} [${beatmap.version}] ${difficulty_rating}⭐. This play is worth ${Math.round(pp.pp)}pp getting ${(scores[0].accuracy * 100).toFixed(2)}% accuracy. ${scores[0].mods.length !== 0 ? 'Mods:' + scores[0].mods.join(" ") + ". " : ""}Link to the map: https://osu.ppy.sh/b/${beatmap.id}`
-    let replayPart = `${(scores[0].replay)?" Replay: https://replay.heyn.live/?scoreId="+scores[0].id:""}`
-    if ((tweetContentBase.length+replayPart.length)>=280) {
+    let tweetContentBase = `🔫 ${sniper.username} [#${sniper.statistics.global_rank}] has sniped ${sniped.username} [#${sniped.statistics.global_rank}] on ${beatmap.beatmapset.artist} - ${beatmap.beatmapset.title} [${beatmap.version}] ${difficulty_rating}⭐. This play is worth ${Math.round(pp.pp)}pp getting ${(scores[0].accuracy * 100).toFixed(2)}% accuracy. ${scores[0].mods.length !== 0 ? 'Mods:' + scores[0].mods.join(" ") + ". " : ""}`
+    let linkPart = `🎮 Link to the map: https://osu.ppy.sh/b/${beatmap.id} ${(scores[0].replay)?"\n📹 Replay: https://replay.heyn.live/?scoreId="+scores[0].id:""}`
+    if (tweetContentBase.length>=280) {
+        const tweetsContentText = tweetContentBase.match(/.{1,280}(?:\s|$)/g);
+        const tweetsContent = []
+        for (const twt of tweetsContentText) {
+            tweetsContent.push({status: twt})
+        }
+        tweetsContent[0].media_ids = mediaIds;
         const tweets = await twitterClient.v1.tweetThread(
-            [{
-                status: tweetContentBase, media_ids: mediaIds
-            }, {
-                status: "📹"+replayPart
+            [tweetsContent, {
+                status: linkPart
             }]
         )
         updateDb("sniper_snipes", "tweet_id", tweets[0].id, "WHERE score_id=" + scores[0].id)
     }
     else {
-        const tweet = await twitterClient.v1.tweet(
-            tweetContentBase+replayPart, {media_ids: mediaIds}
+        const tweet = await twitterClient.v1.tweetThread(
+            [{status: tweetContentBase, media_ids: mediaIds},{status: linkPart}]
         )
-        updateDb("sniper_snipes", "tweet_id", tweet.id, "WHERE score_id=" + scores[0].id)
+        updateDb("sniper_snipes", "tweet_id", tweet[0].id, "WHERE score_id=" + scores[0].id)
     }
 }
 
